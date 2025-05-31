@@ -1,0 +1,114 @@
+matin:
+
+🌐 Role: System Integrator & Alert Engineer
+🎯 Goal
+Connect the entire system together so that:
+
+The ESP32’s dust sensor data and the AI mask detection results communicate seamlessly
+
+The system decides when masks are required
+
+Alerts are triggered if someone isn’t wearing a mask when they should be
+
+✅ Responsibilities (Step-by-Step)
+1. Build a communication bridge
+Create a Flask server (or use MQTT broker) on your laptop to:
+
+Receive dust data from the ESP32
+
+Optionally, receive data from the AI system
+
+Example Flask route to receive JSON:
+
+python
+Copy
+Edit
+@app.route('/sensor-data', methods=['POST'])
+def receive_data():
+    data = request.json
+    pm_value = data['pm25']
+    mask_required = data['mask_required']
+    # store and act on this
+2. Manage shared state
+Maintain global variables like:
+
+python
+Copy
+Edit
+latest_pm25 = 102
+mask_required = True
+These values will be used by the mask detection system to decide whether to trigger alerts
+
+3. Build the alert logic
+If:
+
+mask_required == True AND
+
+AI detects a person without a mask
+
+➝ Show a clear alert
+
+Terminal printout
+
+Pop-up window
+
+Sound alert
+
+Save log to file
+
+Optional: use tkinter, pygame, notify2, or winsound for alert visuals/sounds
+
+4. Optional: Build a dashboard
+If you want extra spice, build a simple GUI or web dashboard showing:
+
+Current air quality
+
+Number of people detected
+
+Number of violations
+
+Use Streamlit or Flask + HTML
+
+📁 Deliverables
+server/flask_receiver.py: Flask app to receive sensor data
+
+server/shared_state.py: Logic for mask/dust thresholds
+
+ui/alerts.py: Module for visual/audio alerting
+
+logs/violations.log: Optional alert history log
+
+📡 System Diagram
+less
+Copy
+Edit
+[ESP32 + Dust Sensor] --(Wi-Fi JSON POST)--> [Flask Server]
+                                             |
+[Camera Feed + AI Detection] -----> [Mask Detected?]
+                                             |
+                                [Decision: Alert or OK]
+                                             |
+                                    [Visual Alert / Sound / Log]
+🧰 Tech Stack
+Python (Flask, threading, requests)
+
+REST or MQTT
+
+Alerting tools (tkinter, Streamlit, winsound, playsound, etc.)
+
+Logging module
+
+🤝 Collaboration Points
+Receives air quality data from the Hardware Engineer
+
+Receives mask detection results from the AI Engineer
+
+Merges them and handles alert logic
+
+🔥 Stretch Goals (Optional)
+Add a web interface to show real-time data
+
+Add charts (e.g., Matplotlib or Chart.js)
+
+Deploy on a Raspberry Pi or local server for real-time use
+
