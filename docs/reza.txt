@@ -1,0 +1,100 @@
+reza:
+
+🧠 Role: AI / Computer Vision Engineer
+🎯 Goal
+Build a reliable system that can:
+
+Detect faces in a live video feed (from webcam or phone)
+
+Determine whether each person is wearing a mask or not
+
+Pass status info to the main system for decision-making (alert or not)
+
+✅ Responsibilities (Step-by-Step)
+1. Set up a live camera feed
+Use OpenCV to read from:
+
+A USB webcam, laptop camera, or
+
+A phone camera using IP Webcam or DroidCam
+
+Code example:
+
+python
+Copy
+Edit
+import cv2
+cap = cv2.VideoCapture(0)  # or IP URL
+2. Detect faces using Haar Cascade
+Use OpenCV’s haarcascade_frontalface_default.xml
+
+Draw bounding boxes around faces
+
+Make sure it works in real-time
+
+3. Load the mask detection model
+Use a pre-trained Keras model (.h5 or .model)
+
+Use TensorFlow/Keras to:
+
+Preprocess face ROI
+
+Predict "Mask" or "No Mask"
+
+python
+Copy
+Edit
+from tensorflow.keras.models import load_model
+model = load_model("mask_detector.model")
+4. Label detected faces
+Overlay "Mask" (green) or "No Mask" (red) on screen
+
+Show live video with results
+
+5. Send result to integrator (optional)
+Communicate with the Flask/MQTT server:
+
+e.g., {"face_detected": True, "mask": False}
+
+Could use REST call or local file queue
+
+📁 Deliverables
+cv/mask_detection.py: Real-time mask detection script
+
+cv/mask_detector.model: Your loaded or trained model
+
+cv/test_images/: Folder for static test images (optional)
+
+README.md: Instructions for setting up and running
+
+🧪 Test Plan
+Test with:
+
+One person in frame
+
+Multiple people
+
+People with surgical masks, cloth masks, no mask
+
+Vary lighting and camera angle
+
+🧰 Tech Stack
+Python
+
+OpenCV
+
+TensorFlow/Keras
+
+Numpy, Imutils (optional)
+
+(Optional: DroidCam/IP Webcam app)
+
+🤝 Collaboration Points
+Works closely with the Integrator to feed detection results
+
+May request test data or threshold input from the Hardware Engineer
+
+🔥 Stretch Goal (Optional)
+Retrain the model on your own dataset (for better accuracy)
+
+Add detection for incorrect mask usage (nose out, chin-only, etc.)
