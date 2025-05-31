@@ -1,0 +1,106 @@
+aria:
+
+🔧 Role: Hardware & Communication Engineer
+🎯 Goal
+Build and deploy a system using ESP32 + Dust Sensor (GP2Y1010AU0F) to:
+
+Measure particulate levels in real-time (air pollution)
+
+Determine whether mask-wearing is required
+
+Send this air quality data to the main AI system via Wi-Fi
+
+✅ Responsibilities (Step-by-Step)
+1. Set up the hardware
+Wire the GP2Y1010AU0F dust sensor to ESP32
+
+Connect:
+
+LED control pin (to 3.3V + GPIO)
+
+Analog output (to ESP32 ADC pin)
+
+Use a 100µF capacitor and 150Ω resistor as per datasheet
+
+Power it properly (preferably with regulated 5V)
+
+2. Read analog dust values
+Use analogRead() on the ESP32
+
+Calibrate values using known formulas for PM2.5 estimation
+
+Convert raw voltage to meaningful data (ug/m³)
+
+3. Apply decision logic
+Add simple logic like:
+
+cpp
+Copy
+Edit
+if (pm25 > 100) {
+    maskRequired = true;
+} else {
+    maskRequired = false;
+}
+4. Send data via Wi-Fi
+ESP32 connects to Wi-Fi and sends data to the AI system:
+
+Option 1: REST API (use HTTPClient.h to POST JSON to Flask)
+
+Option 2: MQTT (more scalable, event-driven)
+
+Example JSON:
+
+json
+Copy
+Edit
+{
+  "pm25": 125,
+  "mask_required": true
+}
+5. Test under different conditions
+Use incense, vacuum dust, or other safe sources to test sensor reaction
+
+Verify values increase and alerts work
+
+📁 Deliverables
+esp32/sensor_reader.ino: ESP32 Arduino sketch
+
+esp32/sensor_diagram.png: Wiring diagram
+
+esp32/data_format.md: How the ESP32 sends data
+
+esp32/config.h: Wi-Fi credentials (ignored from Git)
+
+🧰 Tech Stack / Tools
+ESP32 Dev Board
+
+GP2Y1010AU0F dust sensor
+
+Arduino IDE / PlatformIO
+
+HTTPClient or PubSubClient (for communication)
+
+Serial Monitor for debugging
+
+🔌 Wiring Example (Simplified)
+GP2Y1010AU0F Pin	ESP32
+V-LED	3.3V (through 150Ω resistor)
+LED-GND	GND
+LED	GPIO (e.g., D4)
+S (Output)	ADC pin (e.g., A0)
+Vcc	5V
+GND	GND
+
+🤝 Collaboration Points
+Shares mask_required flag with AI Engineer (through Integrator)
+
+Must provide consistent, timely data to the system
+
+🔥 Stretch Goals (Optional)
+Add temperature + humidity sensor (DHT22, BME280)
+
+Display PM value on an OLED
+
+Trigger onboard buzzer/LED when pollution is bad
+
