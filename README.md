@@ -30,9 +30,9 @@ This project uses:
 - Arduino IDE for ESP32
 
 ### Run AI Model
-```bash
+
 cd cv/
-python mask_detection.py```
+python mask_detection.py
 
 
 ## 👥 Team Members & Roles
