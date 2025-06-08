@@ -1,0 +1,19 @@
+# Python specific
+__pycache__/
+*.pyc
+*.log
+
+# Python virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# IDE specific (VS Code)
+.vscode/
+
+# Jupyter Notebook related
+.ipynb_checkpoints/
+
+# Environment variables (if you use a .env file for sensitive configs)
+*.env
