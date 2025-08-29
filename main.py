@@ -1,366 +1,213 @@
 import sys
+import cv2
+import numpy as np
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                             QLabel, QGroupBox, QSizePolicy, QMessageBox)
-from PyQt5.QtGui import QFont, QColor
-from PyQt5.QtCore import Qt, QTimer, QDateTime
+                             QLabel, QGroupBox, QMessageBox, QPushButton)
+from PyQt5.QtGui import QFont, QImage, QPixmap
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
-import requests
-import json
-import random
+# --- CameraWorker for AI processing ---
+class CameraWorker(QThread):
+    frame_ready = pyqtSignal(QImage)
+    detection_result = pyqtSignal(str)
 
-class Weather:
-    def __init__(self):
-        self.api_key = "ac0ec8fb30mshd1fc81b1ce21a2ep173334jsne4f952e4ff46"
-        self.api_host = "open-weather13.p.rapidapi.com"
-        self.base_url = f"https://{self.api_host}"
+    def __init__(self, parent=None):
+        super(CameraWorker, self).__init__(parent)
+        self._running = True
 
-    def get_weather(self, city):
-        url = f"{self.base_url}/city/{city}/EN"
-
-        headers = {
-            'x-rapidapi-key': self.api_key,
-            'x-rapidapi-host': self.api_host
-        }
+    def run(self):
+        from mtcnn import MTCNN
+        from tensorflow.keras.models import load_model
 
         try:
-            print(f"Fetching weather data from: {url}")
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-
-            trans_data = response.json()
-
-            if 'cod' in trans_data and trans_data['cod'] != 200:
-                print(f"API Error Response: {trans_data.get('message', 'Unknown error')}")
-                return None
-
-            weather_description = trans_data['weather'][0]['description'].capitalize()
-            temperature_kelvin = trans_data['main']['temp']
-            pressure = trans_data['main']['pressure']
-            humidity = trans_data['main']['humidity']
-            wind_speed = trans_data['wind']['speed']
-            city_name = trans_data['name']
-
-            weather_quality_index = random.randint(50, 99)
-            pollution_level = random.randint(30, 180)
-
-            return {
-                "city_name": city_name,
-                "weather_description": weather_description,
-                "temperature": f"{temperature_kelvin}K",
-                "pressure": f"{pressure} hPa",
-                "humidity": f"{humidity}%",
-                "wind_speed": f"{wind_speed} m/s",
-                "weather_quality_index": weather_quality_index,
-                "pollution_level": pollution_level
-            }
-
-        except requests.exceptions.HTTPError as errh:
-            print(f"HTTP Error occurred: {errh}")
-        except requests.exceptions.ConnectionError as errc:
-            print(f"Error Connecting: {errc}")
-        except requests.exceptions.Timeout as errt:
-            print(f"Timeout Error: {errt}")
-        except requests.exceptions.RequestException as err:
-            print(f"An unexpected Requests error occurred: {err}")
-        except json.JSONDecodeError as errj:
-            print(f"JSON Decode Error: {errj} - Response was: {response.text[:200]}")
+            model = load_model("ai/best2_mask_detector.h5")
+            detector = MTCNN()
+            cap = cv2.VideoCapture(0)
         except Exception as e:
-            print(f"An unexpected error occurred in Weather.get_weather: {e}")
-        return None
+            print(f"Error initializing camera or models: {e}")
+            return
+
+        while self._running:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            detections = detector.detect_faces(frame_rgb)
+            current_status = "no_face"
+
+            for detection in detections:
+                x, y, width, height = detection['box']
+                face_crop = frame_rgb[y:y+height, x:x+width]
+
+                if face_crop.size == 0:
+                    continue
+
+                face_crop_resized = cv2.resize(face_crop, (224, 224))
+                face_crop_resized = face_crop_resized.astype("float32") / 255.0
+                face_crop_resized = np.expand_dims(face_crop_resized, axis=0)
+
+                prediction = model.predict(face_crop_resized)[0][0]
+                label = "without_mask" if prediction > 0.5 else "mask"
+                current_status = label
+
+                box_color = (0, 255, 0) if label == "mask" else (255, 0, 0)
+                cv2.rectangle(frame_rgb, (x, y), (x+width, y+height), box_color, 2)
+                cv2.putText(frame_rgb, label, (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
+
+            self.detection_result.emit(current_status)
+
+            h, w, ch = frame_rgb.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            self.frame_ready.emit(qt_image.scaled(640, 480, Qt.KeepAspectRatio))
+
+        cap.release()
+        print("Camera released and thread finished.")
+
+    def stop(self):
+        """Sets the running flag to False to gracefully stop the thread."""
+        self._running = False
+        self.wait() # Wait for the run() method to complete
 
 
-class WeatherAppGUI(QWidget):
+# --- Main GUI Application (Backup Version) ---
+class GuardianAppGUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Weather and Pollution Monitor")
-        self.setGeometry(100, 100, 900, 500)
+        self.setWindowTitle("Iron Mask Guardian (Demo Mode)")
+        self.setGeometry(100, 100, 1200, 600)
 
-        self.CITY = "Sirjan"
-
-        try:
-            self.weather_api_handler = Weather()
-        except Exception as e:
-            QMessageBox.critical(self, "API Initialization Error",
-                                 f"Failed to initialize Weather class: {e}\n"
-                                 "Please check your class definition.")
-            sys.exit(1)
+        # --- THIS IS THE CHANGE FOR TESTING ---
+        # Force bad weather on startup.
+        self.pollution_level = 150
+        
+        self.mask_status = "Unknown"
+        self.pollution_threshold = 100
 
         self.init_ui()
         self.apply_styles()
-        self.start_time_update()
-        self.start_weather_update()
+        
+        # We start the camera immediately in this version
+        self.start_camera()
+        # Set the initial UI status
+        self.update_air_quality(self.pollution_level)
 
     def init_ui(self):
         main_layout = QHBoxLayout()
 
-        # --- Weather Information Section ---
-        weather_group_box = QGroupBox("Current Weather")
-        weather_layout = QVBoxLayout()
-        weather_group_box.setLayout(weather_layout)
-        weather_group_box.setObjectName("weatherGroupBox")
+        # Left Side: Camera Feed and AI Status
+        left_group_box = QGroupBox("Live Monitoring")
+        left_layout = QVBoxLayout()
+        left_group_box.setLayout(left_layout)
+        self.camera_feed_label = QLabel("Initializing Camera...")
+        self.camera_feed_label.setAlignment(Qt.AlignCenter)
+        self.camera_feed_label.setStyleSheet("background-color: black;")
+        left_layout.addWidget(self.camera_feed_label)
+        self.mask_status_label = QLabel("Mask Status: UNKNOWN")
+        self.mask_status_label.setFont(QFont("Arial", 20, QFont.Bold))
+        self.mask_status_label.setAlignment(Qt.AlignCenter)
+        left_layout.addWidget(self.mask_status_label)
 
-        # Time Display Label
-        self.time_label = QLabel()
-        self.time_label.setAlignment(Qt.AlignCenter)
-        self.time_label.setFont(QFont("Arial", 18, QFont.Bold))
-        self.time_label.setObjectName("timeDisplayLabel")
-        weather_layout.addWidget(self.time_label)
-        weather_layout.addSpacing(15)
+        # Right Side: Air Quality Control and Final Warning
+        right_group_box = QGroupBox("System Control")
+        right_layout = QVBoxLayout()
+        right_group_box.setLayout(right_layout)
+        self.pollution_level_label = QLabel("Air Quality Level: N/A")
+        self.pollution_level_label.setFont(QFont("Arial", 24, QFont.Bold))
+        self.pollution_level_label.setAlignment(Qt.AlignCenter)
+        self.final_warning_label = QLabel("System OK")
+        self.final_warning_label.setFont(QFont("Arial", 32, QFont.Bold))
+        self.final_warning_label.setAlignment(Qt.AlignCenter)
+        self.final_warning_label.setWordWrap(True)
 
-        # New: City Name Display Label
-        self.city_name_label = QLabel(f"City: {self.CITY}") # Initial text, will be updated
-        self.city_name_label.setAlignment(Qt.AlignCenter)
-        self.city_name_label.setFont(QFont("Arial", 18, QFont.Bold))
-        self.city_name_label.setObjectName("cityDisplayLabel") # Object name for styling
-        weather_layout.addWidget(self.city_name_label)
-        weather_layout.addSpacing(15) # Add some space below the city name
+        # Control buttons for the demo
+        self.simulate_pollution_button = QPushButton("Simulate High Pollution Event")
+        self.simulate_pollution_button.setFont(QFont("Arial", 14))
+        self.simulate_pollution_button.clicked.connect(self.trigger_bad_air)
 
-        self.temperature = "N/A"
-        self.humidity = "N/A"
-        self.pressure = "N/A"
-        self.wind_speed = "N/A"
-        self.weather_quality_index = "N/A"
-        self.weather_description = "N/A"
+        self.reset_air_button = QPushButton("Reset to Good Air")
+        self.reset_air_button.setFont(QFont("Arial", 14))
+        self.reset_air_button.clicked.connect(self.trigger_good_air)
 
-        self.temp_label = QLabel(f"Temperature: {self.temperature}")
-        self.temp_label.setObjectName("dataLabel")
-        weather_layout.addWidget(self.temp_label)
+        right_layout.addWidget(self.pollution_level_label)
+        right_layout.addStretch(1)
+        right_layout.addWidget(self.simulate_pollution_button)
+        right_layout.addWidget(self.reset_air_button)
+        right_layout.addStretch(1)
+        right_layout.addWidget(self.final_warning_label)
+        right_layout.addStretch(2)
 
-        self.humidity_label = QLabel(f"Humidity: {self.humidity}")
-        self.humidity_label.setObjectName("dataLabel")
-        weather_layout.addWidget(self.humidity_label)
-
-        self.pressure_label = QLabel(f"Pressure: {self.pressure}")
-        self.pressure_label.setObjectName("dataLabel")
-        weather_layout.addWidget(self.pressure_label)
-
-        self.wind_speed_label = QLabel(f"Wind Speed: {self.wind_speed}")
-        self.wind_speed_label.setObjectName("dataLabel")
-        weather_layout.addWidget(self.wind_speed_label)
-
-        self.weather_desc_label = QLabel(f"Description: {self.weather_description}")
-        self.weather_desc_label.setObjectName("dataLabel")
-        weather_layout.addWidget(self.weather_desc_label)
-
-        self.quality_index_label = QLabel(f"Weather Quality Index: {self.weather_quality_index}")
-        self.quality_index_label.setFont(QFont("Arial", 20, QFont.Bold))
-        self.quality_index_label.setAlignment(Qt.AlignCenter)
-        self.quality_index_label.setObjectName("qualityIndexLabel")
-        weather_layout.addStretch(1)
-        weather_layout.addWidget(self.quality_index_label)
-        weather_layout.addStretch(1)
-
-        main_layout.addWidget(weather_group_box, 2)
-
-        # --- Pollution Warning Section ---
-        pollution_group_box = QGroupBox("Air Quality Status")
-        pollution_layout = QVBoxLayout()
-        pollution_group_box.setLayout(pollution_layout)
-        pollution_group_box.setObjectName("pollutionGroupBox")
-
-        self.pollution_level = 0
-        self.pollution_threshold = 100
-
-        self.pollution_warning_label = QLabel("")
-        self.pollution_warning_label.setFont(QFont("Arial", 24, QFont.Bold))
-        self.pollution_warning_label.setAlignment(Qt.AlignCenter)
-        self.pollution_warning_label.setWordWrap(True)
-        self.pollution_warning_label.setObjectName("pollutionWarningLabel")
-
-        pollution_layout.addStretch(1)
-        pollution_layout.addWidget(self.pollution_warning_label)
-        pollution_layout.addStretch(1)
-
-        main_layout.addWidget(pollution_group_box, 1)
-
+        main_layout.addWidget(left_group_box, 2)
+        main_layout.addWidget(right_group_box, 1)
         self.setLayout(main_layout)
 
-    def update_time(self):
-        current_time = QDateTime.currentDateTime().toString("hh:mm:ss")
-        self.time_label.setText(f"Current Time: {current_time}")
+    def start_camera(self):
+        self.camera_worker = CameraWorker()
+        self.camera_worker.frame_ready.connect(self.update_camera_feed)
+        self.camera_worker.detection_result.connect(self.update_mask_status)
+        self.camera_worker.start()
 
-    def start_time_update(self):
-        self.timer_time = QTimer(self)
-        self.timer_time.timeout.connect(self.update_time)
-        self.timer_time.start(1000)
-        self.update_time()
+    def trigger_bad_air(self):
+        """Button click handler to simulate bad air."""
+        self.update_air_quality(150)
 
-    def update_weather_data(self):
-        print(f"Attempting to fetch weather data for {self.CITY}...")
-        weather_data = self.weather_api_handler.get_weather(self.CITY)
+    def trigger_good_air(self):
+        """Button click handler to simulate good air."""
+        self.update_air_quality(50)
 
-        if weather_data:
-            print("Weather data fetched successfully. Updating UI...")
-            # Update internal variables from the API class
-            self.city_name = weather_data.get("city_name", "N/A") # Get city name from API
-            self.temperature = weather_data.get("temperature", "N/A")
-            self.humidity = weather_data.get("humidity", "N/A")
-            self.pressure = weather_data.get("pressure", "N/A")
-            self.wind_speed = weather_data.get("wind_speed", "N/A")
-            self.weather_description = weather_data.get("weather_description", "N/A")
-            self.weather_quality_index = weather_data.get("weather_quality_index", "N/A")
-            self.pollution_level = weather_data.get("pollution_level", 0)
+    def update_camera_feed(self, image):
+        self.camera_feed_label.setPixmap(QPixmap.fromImage(image))
 
-            # Update GUI labels
-            self.city_name_label.setText(f"City: {self.city_name}") # Update city name label
-            self.temp_label.setText(f"Temperature: {self.temperature}")
-            self.humidity_label.setText(f"Humidity: {self.humidity}")
-            self.pressure_label.setText(f"Pressure: {self.pressure}")
-            self.wind_speed_label.setText(f"Wind Speed: {self.wind_speed}")
-            self.weather_desc_label.setText(f"Description: {self.weather_description}")
-            self.quality_index_label.setText(f"Weather Quality Index: {self.weather_quality_index}")
-
-            self.update_pollution_status()
-            self.apply_styles()
+    def update_mask_status(self, status):
+        self.mask_status = status
+        if status == "mask":
+            text, color = "Mask: DETECTED", "green"
+        elif status == "without_mask":
+            text, color = "Mask: NOT DETECTED", "red"
         else:
-            print("Failed to fetch weather data or city not found.")
-            QMessageBox.warning(self, "Weather Data Error",
-                                f"Failed to retrieve latest weather data for {self.CITY}. "
-                                "Check connection, city name, or API key/rate limits.")
-            # Set labels to N/A on error
-            self.city_name_label.setText(f"City: N/A ({self.CITY})") # Indicate city tried
-            self.temp_label.setText("Temperature: N/A")
-            self.humidity_label.setText("Humidity: N/A")
-            self.pressure_label.setText("Pressure: N/A")
-            self.wind_speed_label.setText("Wind Speed: N/A")
-            self.weather_desc_label.setText("Description: N/A")
-            self.quality_index_label.setText("Weather Quality Index: N/A")
-            self.pollution_level = 0
-            self.update_pollution_status()
-            self.apply_styles()
+            text, color = "NO FACE DETECTED", "gray"
+        self.mask_status_label.setText(text)
+        self.mask_status_label.setStyleSheet(f"background-color: {color}; color: white; border-radius: 10px; padding: 5px;")
+        self.check_final_warning()
 
-    def start_weather_update(self):
-        self.timer_weather = QTimer(self)
-        self.timer_weather.timeout.connect(self.update_weather_data)
-        self.timer_weather.start(300000) # 5 minutes
-        self.update_weather_data()
+    def update_air_quality(self, value):
+        self.pollution_level = value
+        self.pollution_level_label.setText(f"Air Quality Level: {value}")
+        self.check_final_warning()
 
-    def update_pollution_status(self):
-        if self.pollution_level > self.pollution_threshold:
-            self.pollution_warning_label.setText(
-                f"WARNING: AIR QUALITY IS BAD!\n(Level: {self.pollution_level})"
-            )
-        elif self.pollution_level > 0:
-            self.pollution_warning_label.setText(
-                f"Air Quality is GOOD\n(Level: {self.pollution_level})"
-            )
+    def check_final_warning(self):
+        is_air_bad = self.pollution_level > self.pollution_threshold
+        is_mask_missing = self.mask_status == "without_mask"
+
+        if is_air_bad and is_mask_missing:
+            self.final_warning_label.setText(f"WARNING!\nAir quality is poor (Level: {self.pollution_level})\nPUT ON A MASK!")
+            self.final_warning_label.setStyleSheet("background-color: #ffcccc; color: #cc0000; border: 3px solid #cc0000; border-radius: 20px; padding: 10px;")
+        elif is_air_bad and not is_mask_missing:
+            self.final_warning_label.setText("Air quality is poor.\nGood job wearing a mask.")
+            self.final_warning_label.setStyleSheet("background-color: #e6f7ff; color: #004d99; border: 3px solid #90b3cc; border-radius: 20px; padding: 10px;")
         else:
-            self.pollution_warning_label.setText("Air Quality: N/A")
+            self.final_warning_label.setText("Air Quality is GOOD.\nNo mask required.")
+            self.final_warning_label.setStyleSheet("background-color: #ccffcc; color: #009900; border: 3px solid #009900; border-radius: 20px; padding: 10px;")
+
+    def closeEvent(self, event):
+        print("Close event triggered. Stopping threads...")
+        self.camera_worker.stop()
+        event.accept()
 
     def apply_styles(self):
         self.setStyleSheet("""
-            QWidget {
-                background-color: #f0f0f0;
-                font-family: 'Segoe UI', Arial, sans-serif;
-            }
-
-            QGroupBox {
-                background-color: #ffffff;
-                border: 2px solid #a0a0a0;
-                border-radius: 10px;
-                margin-top: 10px;
-                font-size: 16px;
-                font-weight: bold;
-                color: #333333;
-            }
-
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top center;
-                padding: 0 10px;
-                background-color: #e0e0e0;
-                border-radius: 5px;
-            }
-
-            #weatherGroupBox {
-                background-color: #e6f7ff;
-                border: 2px solid #90b3cc;
-            }
-
-            #pollutionGroupBox {
-                background-color: #ffe6e6;
-                border: 2px solid #cc9090;
-            }
-
-            QLabel#timeDisplayLabel {
-                background-color: #cceeff;
-                color: #004d99;
-                border: 2px solid #80c0ff;
-                border-radius: 8px;
-                padding: 10px;
-                margin-bottom: 10px;
-                font-size: 20px;
-                font-weight: bold;
-            }
-
-            /* New Style for City Display Label */
-            QLabel#cityDisplayLabel {
-                background-color: #e0f2f7; /* Slightly lighter blue */
-                color: #005a80; /* Darker blue text */
-                border: 2px solid #80c0ff;
-                border-radius: 8px;
-                padding: 10px;
-                margin-bottom: 10px;
-                font-size: 20px;
-                font-weight: bold;
-            }
-
-
-            QLabel#dataLabel {
-                font-size: 16px;
-                color: #333333;
-                padding: 5px;
-                margin-bottom: 3px;
-                border-bottom: 1px dashed #cccccc;
-            }
-
-            QLabel#qualityIndexLabel {
-                font-size: 28px;
-                font-weight: bold;
-                color: #0066cc;
-                background-color: #ccedff;
-                border: 2px solid #0066cc;
-                border-radius: 15px;
-                padding: 10px;
-                margin: 10px;
-            }
-
-            QLabel#pollutionWarningLabel {
-                font-size: 32px;
-                font-weight: bold;
-                padding: 20px;
-                border-radius: 20px;
-            }
+            QWidget { background-color: #f0f0f0; font-family: 'Segoe UI', Arial, sans-serif; }
+            QGroupBox { background-color: #ffffff; border: 2px solid #a0a0a0; border-radius: 10px; margin-top: 10px; font-size: 16px; font-weight: bold; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 10px; }
+            QPushButton { padding: 10px; background-color: #d0d0d0; border: 1px solid #a0a0a0; border-radius: 5px; font-weight: bold; }
+            QPushButton:hover { background-color: #e0e0e0; }
         """)
-
-        if self.pollution_level != "N/A" and self.pollution_level > self.pollution_threshold:
-            self.pollution_warning_label.setStyleSheet("""
-                QLabel#pollutionWarningLabel {
-                    background-color: #ffcccc;
-                    color: #cc0000;
-                    border: 3px solid #cc0000;
-                }
-            """)
-        elif self.pollution_level != "N/A" and self.pollution_level > 0:
-            self.pollution_warning_label.setStyleSheet("""
-                QLabel#pollutionWarningLabel {
-                    background-color: #ccffcc;
-                    color: #009900;
-                    border: 3px solid #009900;
-                }
-            """)
-        else:
-             self.pollution_warning_label.setStyleSheet("""
-                QLabel#pollutionWarningLabel {
-                    background-color: #e0e0e0;
-                    color: #666666;
-                    border: 3px solid #999999;
-                }
-            """)
-
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    gui = WeatherAppGUI()
+    gui = GuardianAppGUI()
     gui.show()
     sys.exit(app.exec_())
+
