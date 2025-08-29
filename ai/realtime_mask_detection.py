@@ -39,12 +39,14 @@ while True:
 
         prediction = model.predict(face_crop_resized)[0][0]
         label = "without_mask" if prediction > 0.5 else "mask"
+        print(f"[STATUS] {label}", flush=True)  # <= add this line
 
         # Change bounding box color based on prediction
         box_color = (0, 255, 0) if label == "mask" else (0, 0, 255)
         cv2.rectangle(frame, (x, y), (x+width, y+height), box_color, 2)
         cv2.putText(frame, f"{label}: {prediction:.2f}", (x, y-10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
+        
 
     cv2.imshow("Real-Time Mask Detection", frame)
 
